@@ -15,7 +15,6 @@ import (
 	"github.com/magnusbaeck/logstash-filter-verifier/logging"
 	"github.com/magnusbaeck/logstash-filter-verifier/logstash"
 	"github.com/magnusbaeck/logstash-filter-verifier/testcase"
-	"github.com/mattn/go-shellwords"
 	oplogging "github.com/op/go-logging"
 )
 
@@ -39,10 +38,6 @@ var (
 	}
 
 	// Flags
-	diffCommand = kingpin.
-			Flag("diff-command", "Set the command to run to compare two events. The command will receive the two files to compare as arguments.").
-			Default("diff -u").
-			String()
 	keptEnvVars = kingpin.
 			Flag("keep-env", fmt.Sprintf("Add this environment variable to the list of variables that will be preserved from the calling process's environment. Initial list of variables: %s", strings.Join(defaultKeptEnvVars, ", "))).
 			PlaceHolder("VARNAME").
@@ -111,7 +106,7 @@ func findExecutable(paths []string) (string, error) {
 // slice of test cases and compares the actual events against the
 // expected set. Returns an error if at least one test case fails or
 // if there's a problem running the tests.
-func runTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, diffCommand []string, keptEnvVars []string) error {
+func runTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, keptEnvVars []string) error {
 	ok := true
 	for _, t := range tests {
 		fmt.Printf("Running tests in %s...\n", filepath.Base(t.File))
@@ -142,7 +137,7 @@ func runTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, diffComman
 			}
 			userError("%s", message)
 		}
-		if err = t.Compare(result.Events, false, diffCommand); err != nil {
+		if err = t.Compare(result.Events, false); err != nil {
 			userError("Testcase failed, continuing with the rest: %s", err)
 			ok = false
 		}
@@ -157,7 +152,7 @@ func runTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, diffComman
 // instance of Logstash against a slice of test cases and compares
 // the actual events against the expected set. Returns an error if
 // at least one test case fails or if there's a problem running the tests.
-func runParallelTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, diffCommand []string, keptEnvVars []string) error {
+func runParallelTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, keptEnvVars []string) error {
 	var testStreams []*logstash.TestStream
 
 	badCodecs := map[string]string{
@@ -214,7 +209,7 @@ func runParallelTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, di
 	}
 	ok := true
 	for i, t := range tests {
-		if err = t.Compare(result.Events[i], false, diffCommand); err != nil {
+		if err = t.Compare(result.Events[i], false); err != nil {
 			userError("Testcase failed, continuing with the rest: %s", err)
 			ok = false
 		}
@@ -279,12 +274,6 @@ func mainEntrypoint() int {
 	}
 	logging.SetLevel(level)
 
-	diffCmd, err := shellwords.NewParser().Parse(*diffCommand)
-	if err != nil {
-		userError("Error parsing diff command %q: %s", *diffCommand, err)
-		return 1
-	}
-
 	tests, err := testcase.DiscoverTests(*testcasePath)
 	if err != nil {
 		userError(err.Error())
@@ -326,12 +315,12 @@ func mainEntrypoint() int {
 			return 1
 		}
 		fmt.Println("Use Unix domain sockets.")
-		if err = runParallelTests(inv, tests, diffCmd, allKeptEnvVars); err != nil {
+		if err = runParallelTests(inv, tests, allKeptEnvVars); err != nil {
 			userError(err.Error())
 			return 1
 		}
 	} else {
-		if err = runTests(inv, tests, diffCmd, allKeptEnvVars); err != nil {
+		if err = runTests(inv, tests, allKeptEnvVars); err != nil {
 			userError(err.Error())
 			return 1
 		}

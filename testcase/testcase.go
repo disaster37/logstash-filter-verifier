@@ -8,13 +8,12 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/google/go-cmp/cmp"
 	unjson "github.com/hashicorp/packer/common/json"
 	"github.com/magnusbaeck/logstash-filter-verifier/logging"
 	"github.com/magnusbaeck/logstash-filter-verifier/logstash"
@@ -143,6 +142,15 @@ func (t *TestCaseSet) convertDotFileds() error {
 
 }
 
+func (t *TestCaseSet) convertIntToFloat64() {
+
+	// Convert fields in expected events
+	for i, expected := range t.ExpectedEvents {
+		t.ExpectedEvents[i] = convertIntToFloat64(expected)
+	}
+
+}
+
 // New reads a test case configuration from a reader and returns a
 // TestCase. Defaults to a "line" codec and ignoring the @version
 // field. If the configuration being read lists additional fields to
@@ -189,6 +197,8 @@ func New(reader io.Reader, configType string) (*TestCaseSet, error) {
 		}
 	}
 
+	// Convert Int to Float64 for compatibily with json.Marshal
+	tcs.convertIntToFloat64()
 	// Convert dot fields
 	if err := tcs.convertDotFileds(); err != nil {
 		return nil, err
@@ -226,11 +236,10 @@ func NewFromFile(path string) (*TestCaseSet, error) {
 }
 
 // Compare compares a slice of events against the expected events of
-// this test case. Each event is written pretty-printed to a temporary
-// file and the two files are passed to "diff -u". If quiet is true,
+// this test case. If quiet is true,
 // the progress messages normally written to stderr will be emitted
 // and the output of the diff program will be discarded.
-func (tcs *TestCaseSet) Compare(events []logstash.Event, quiet bool, diffCommand []string) error {
+func (tcs *TestCaseSet) Compare(events []logstash.Event, quiet bool) error {
 	result := ComparisonError{
 		ActualCount:   len(events),
 		ExpectedCount: len(tcs.ExpectedEvents),
@@ -243,17 +252,10 @@ func (tcs *TestCaseSet) Compare(events []logstash.Event, quiet bool, diffCommand
 		return result
 	}
 
-	tempdir, err := ioutil.TempDir("", "")
-	if err != nil {
-		return nil
-	}
-	defer func() {
-		if err := os.RemoveAll(tempdir); err != nil {
-			log.Error("Problem deleting temporary directory: %s", err)
-		}
-	}()
-
+	// Loop over events
 	for i, actualEvent := range events {
+
+		// Get the right description
 		if !quiet {
 			var description string
 			if len(tcs.descriptions[i]) > 0 {
@@ -262,78 +264,23 @@ func (tcs *TestCaseSet) Compare(events []logstash.Event, quiet bool, diffCommand
 			fmt.Printf("Comparing message %d of %d from %s%s...\n", i+1, len(events), filepath.Base(tcs.File), description)
 		}
 
+		// Remove fields that must be exlude
 		for _, ignored := range tcs.IgnoredFields {
 			// Ignored fields can be in a sub object
 			fieldTree := strings.Split(ignored, ".")
 			actualEvent = removeFields(fieldTree, actualEvent)
-
 		}
 
-		// Create a directory structure for the JSON file being
-		// compared that makes it easy for the user to identify
-		// the failing test case in the diff output:
-		// $TMP/<random>/<test case file>/<event #>/<actual|expected>
-		resultDir := filepath.Join(tempdir, filepath.Base(tcs.File), strconv.Itoa(i+1))
-		actualFilePath := filepath.Join(resultDir, "actual")
-		if err = marshalToFile(actualEvent, actualFilePath); err != nil {
-			return err
-		}
-		expectedFilePath := filepath.Join(resultDir, "expected")
-		if err = marshalToFile(tcs.ExpectedEvents[i], expectedFilePath); err != nil {
-			return err
-		}
-
-		equal, err := runDiffCommand(diffCommand, expectedFilePath, actualFilePath, quiet)
-		if err != nil {
-			return err
-		}
-		if !equal {
+		// Compare actual events and expected
+		if diff := cmp.Diff(actualEvent, tcs.ExpectedEvents[i]); diff != "" {
 			result.Mismatches = append(result.Mismatches, MismatchedEvent{actualEvent, tcs.ExpectedEvents[i], i})
+			fmt.Printf("%s", diff)
 		}
 	}
 	if len(result.Mismatches) == 0 {
 		return nil
 	}
 	return result
-}
-
-// marshalToFile pretty-prints a logstash.Event and writes it to a
-// file, creating the file's parent directories as necessary.
-func marshalToFile(event logstash.Event, filename string) error {
-	buf, err := json.MarshalIndent(event, "", "  ")
-	if err != nil {
-		return fmt.Errorf("Failed to marshal %+v as JSON: %s", event, err)
-	}
-	if err = os.MkdirAll(filepath.Dir(filename), 0700); err != nil {
-		return err
-	}
-	return ioutil.WriteFile(filename, []byte(string(buf)+"\n"), 0600)
-}
-
-// runDiffCommand passes two files to the supplied command (executable
-// path and optional arguments) and returns whether the files were
-// equal, i.e. whether the diff command returned a zero exit
-// status. The returned error value will be set if there was a problem
-// running the command. If quiet is true, the output of the diff
-// command will be discarded. Otherwise the child process will inherit
-// stdout and stderr from the parent.
-func runDiffCommand(command []string, file1, file2 string, quiet bool) (bool, error) {
-	fullCommand := append(command, file1)
-	fullCommand = append(fullCommand, file2)
-	c := exec.Command(fullCommand[0], fullCommand[1:]...)
-	if !quiet {
-		c.Stdout = os.Stdout
-		c.Stderr = os.Stderr
-	}
-	log.Info("Starting %q with args %q.", c.Path, c.Args[1:])
-	if err := c.Start(); err != nil {
-		return false, err
-	}
-	if err := c.Wait(); err != nil {
-		log.Info("Child with pid %d failed: %s", c.Process.Pid, err)
-		return false, nil
-	}
-	return true, nil
 }
 
 func (e ComparisonError) Error() string {

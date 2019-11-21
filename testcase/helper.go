@@ -69,3 +69,20 @@ func removeField(keys []string, data map[string]interface{}) map[string]interfac
 
 	return data
 }
+
+func convertIntToFloat64(data map[string]interface{}) map[string]interface{} {
+
+	for key, val := range data {
+		rv := reflect.ValueOf(val)
+		if rv.Kind() == reflect.Map {
+			data[key] = convertIntToFloat64(val.(map[string]interface{}))
+		} else {
+			if rv.Kind() == reflect.Int {
+				data[key] = float64(val.(int))
+			}
+		}
+	}
+
+	return data
+
+}

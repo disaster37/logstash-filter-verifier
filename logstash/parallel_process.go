@@ -20,12 +20,15 @@ import (
 
 // TestStream contains the input and output streams for one test case
 type TestStream struct {
-	sender         *net.UnixConn
-	senderListener *net.UnixListener
-	senderReady    chan struct{}
-	senderPath     string
-	receiver       *deletedTempFile
-	timeout        time.Duration
+	sender           *net.UnixConn
+	senderListener   *net.UnixListener
+	senderReady      chan struct{}
+	senderPath       string
+	timeout          time.Duration
+	receiver         *net.Conn
+	receiverListener net.Listener
+	receiverReady    chan struct{}
+	receiverPort     int
 
 	inputCodec string
 	fields     FieldSet
@@ -43,41 +46,47 @@ func NewTestStream(inputCodec string, fields FieldSet, timeout time.Duration) (*
 	}
 
 	ts := &TestStream{
-		senderReady: make(chan struct{}),
-		senderPath:  filepath.Join(dir, "socket"),
-		inputCodec:  inputCodec,
-		fields:      fields,
-		timeout:     timeout,
+		senderReady:   make(chan struct{}),
+		senderPath:    filepath.Join(dir, "socket_input"),
+		inputCodec:    inputCodec,
+		fields:        fields,
+		timeout:       timeout,
+		receiverReady: make(chan struct{}),
+		receiverPort:  32001,
 	}
 
+	// Create input as unix socket
 	ts.senderListener, err = net.ListenUnix("unix", &net.UnixAddr{Name: ts.senderPath, Net: "unix"})
 	if err != nil {
 		log.Fatalf("Unable to create unix socket for listening: %s", err)
 	}
 	ts.senderListener.SetUnlinkOnClose(false)
 
+	// Create output as tcp socket
+	ts.receiverListener, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", ts.receiverPort))
+	if err != nil {
+		log.Fatalf("Unable to create TCP socket for listening: %s", err)
+	}
+
 	go func() {
 		defer close(ts.senderReady)
+		defer close(ts.receiverReady)
 
+		// Accept unix socket
 		ts.sender, err = ts.senderListener.AcceptUnix()
 		if err != nil {
 			log.Errorf("Error while accept unix socket: %s", err)
 		}
 		ts.senderListener.Close()
-	}()
 
-	// Unfortunately Logstash doesn't make it easy to just read
-	// events from a stdout-connected pipe and the log from a
-	// stderr-connected pipe. Stdout can contain other garbage (at
-	// the very least "future logs will be sent to ...") and error
-	// messages could very well be sent there too. Mitigate by
-	// having Logstash write output logs to a temporary file and
-	// its own logs to a different temporary file.
-	outputFile, err := newDeletedTempFile("", "")
-	if err != nil {
-		return nil, err
-	}
-	ts.receiver = outputFile
+		// Accept tcp socket
+		receiver, err := ts.receiverListener.Accept()
+		if err != nil {
+			log.Errorf("Error while accept tcp socket: %s", err)
+		}
+		ts.receiver = &receiver
+		ts.receiverListener.Close()
+	}()
 
 	return ts, nil
 }

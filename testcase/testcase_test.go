@@ -161,7 +161,6 @@ func TestCompare(t *testing.T) {
 	cases := []struct {
 		testcase     *TestCaseSet
 		actualEvents []logstash.Event
-		diffCommand  []string
 		result       error
 	}{
 		// Empty test case with no messages is okay.
@@ -176,7 +175,6 @@ func TestCompare(t *testing.T) {
 				ExpectedEvents: []logstash.Event{},
 			},
 			[]logstash.Event{},
-			[]string{"diff"},
 			nil,
 		},
 		// Too few messages received.
@@ -202,7 +200,6 @@ func TestCompare(t *testing.T) {
 					"a": "b",
 				},
 			},
-			[]string{"diff"},
 			ComparisonError{
 				ActualCount:   1,
 				ExpectedCount: 2,
@@ -232,7 +229,6 @@ func TestCompare(t *testing.T) {
 					"c": "d",
 				},
 			},
-			[]string{"diff"},
 			ComparisonError{
 				ActualCount:   2,
 				ExpectedCount: 1,
@@ -259,7 +255,6 @@ func TestCompare(t *testing.T) {
 					"c": "d",
 				},
 			},
-			[]string{"diff"},
 			ComparisonError{
 				ActualCount:   1,
 				ExpectedCount: 1,
@@ -296,7 +291,6 @@ func TestCompare(t *testing.T) {
 					"a": "B",
 				},
 			},
-			[]string{"diff"},
 			ComparisonError{
 				ActualCount:   1,
 				ExpectedCount: 1,
@@ -335,7 +329,6 @@ func TestCompare(t *testing.T) {
 					"not_ignored": "value",
 				},
 			},
-			[]string{"diff"},
 			nil,
 		},
 		// Ignorded filed with dot notation are ignored
@@ -370,7 +363,6 @@ func TestCompare(t *testing.T) {
 					"not_ignored": "value",
 				},
 			},
-			[]string{"diff"},
 			nil,
 		},
 		// Ignorded filed with dot notation are ignored (when empty hash)
@@ -399,38 +391,14 @@ func TestCompare(t *testing.T) {
 					"not_ignored": "value",
 				},
 			},
-			[]string{"diff"},
 			nil,
-		},
-		// Diff command execution errors are propagated correctly.
-		{
-			&TestCaseSet{
-				File: "/path/to/filename.json",
-				InputFields: logstash.FieldSet{
-					"type": "test",
-				},
-				Codec:      "line",
-				InputLines: []string{},
-				ExpectedEvents: []logstash.Event{
-					{
-						"a": "b",
-					},
-				},
-			},
-			[]logstash.Event{
-				{
-					"a": "b",
-				},
-			},
-			[]string{filepath.Join(tempdir, "does-not-exist")},
-			&os.PathError{},
 		},
 	}
 
 	for i, c := range cases {
-		actualResult := c.testcase.Compare(c.actualEvents, true, c.diffCommand)
+		actualResult := c.testcase.Compare(c.actualEvents, true)
 		if actualResult == nil && c.result != nil {
-			t.Errorf("Test %d: Expected failure, got success.", i)
+			t.Errorf("Test %d: Expected failure, got success.Actual: %+v\n Expected: %+v", i, c.actualEvents, c.testcase.ExpectedEvents)
 		} else if actualResult != nil && c.result == nil {
 			t.Errorf("Test %d: Expected success, got this error instead: %#v", i, actualResult)
 		} else if actualResult != nil && c.result != nil {
@@ -452,36 +420,6 @@ func TestCompare(t *testing.T) {
 				t.Errorf("Test %d:\nExpected error:\n%s\nGot:\n%s (%s)", i, expectedType, actualType, actualResult)
 			}
 		}
-	}
-}
-
-func TestMarshalToFile(t *testing.T) {
-	tempdir, err := ioutil.TempDir("", "")
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
-	defer os.RemoveAll(tempdir)
-
-	// Implicitly test that subdirectories are created as needed.
-	fullpath := filepath.Join(tempdir, "a", "b", "c.json")
-
-	if err = marshalToFile(logstash.Event{}, fullpath); err != nil {
-		t.Fatalf(err.Error())
-	}
-
-	// We won't verify the actual contents that was marshalled,
-	// we'll just check that it can be unmarshalled again and that
-	// the file ends with a newline.
-	buf, err := ioutil.ReadFile(fullpath)
-	if err != nil {
-		t.Fatalf(err.Error())
-	}
-	if len(buf) > 0 && buf[len(buf)-1] != '\n' {
-		t.Errorf("Expected non-empty file ending with a newline: %q", string(buf))
-	}
-	var event logstash.Event
-	if err = json.Unmarshal(buf, &event); err != nil {
-		t.Errorf("%s: %q", err, string(buf))
 	}
 }
 
