@@ -71,6 +71,14 @@ var (
 				Flag("sockets-timeout", "Timeout (duration) for the communication with Logstash via Unix domain sockets. Has no effect unless --sockets is used.").
 				Default("60s").
 				Duration()
+	socketInputLogstash = kingpin.
+				Flag("soket-input-port", "Port number to use for logstash input TCP. Has no effect unless --sockets is used.").
+				Default("32001").
+				Int()
+	socketOutputLogstash = kingpin.
+				Flag("soket-output-port", "Port number to use for logstash output TCP. Has no effect unless --sockets is used.").
+				Default("32001").
+				Int()
 
 	// Arguments
 	testcasePath = kingpin.
@@ -153,7 +161,6 @@ func runTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, keptEnvVar
 // the actual events against the expected set. Returns an error if
 // at least one test case fails or if there's a problem running the tests.
 func runParallelTests(inv *logstash.Invocation, tests []testcase.TestCaseSet, keptEnvVars []string) error {
-	var testStreams []*logstash.TestStream
 
 	badCodecs := map[string]string{
 		"json":  "json_lines",
